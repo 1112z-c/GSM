@@ -169,7 +169,7 @@ class MolecularDescriptorCalculator:
         return count
 
 class DataPreprocessor:
-    """数据预处理器"""
+    """数据预处理器 - 符合KPI框架要求"""
     
     def __init__(self):
         """初始化数据预处理器"""
@@ -177,6 +177,16 @@ class DataPreprocessor:
         self.imputer = SimpleImputer(strategy='median')
         self.descriptor_calculator = MolecularDescriptorCalculator()
         self.is_fitted = False
+        
+        # KPI框架数据限制
+        self.allowed_elements = {'H', 'C', 'N', 'O', 'F', 'Si', 'P', 'Cl', 'Br', 'I'}
+        self.min_molecular_weight = 0
+        self.max_molecular_weight = 600
+        self.min_heavy_atoms = 0
+        self.max_heavy_atoms = 30
+        
+        # 目标属性
+        self.target_properties = ['melting_point', 'boiling_point', 'flash_point']
     
     def clean_data(self, df: pd.DataFrame) -> pd.DataFrame:
         """
