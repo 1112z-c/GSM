@@ -1,0 +1,68 @@
+{
+  "api_settings": {
+    "materials_project_api_key": "your_materials_project_api_key_here",
+    "base_url": "https://api.materialsproject.org",
+    "request_delay": 0.1,
+    "max_retries": 3
+  },
+  "data_acquisition": {
+    "default_elements": ["C", "H", "O", "N"],
+    "max_materials": 1000,
+    "chunk_size": 100,
+    "timeout": 30
+  },
+  "preprocessing": {
+    "min_smiles_length": 1,
+    "max_smiles_length": 200,
+    "missing_value_strategy": "median",
+    "outlier_threshold": 3.0
+  },
+  "embedding": {
+    "molecular_embedding_dim": 128,
+    "knowledge_vector_dim": 64,
+    "max_sequence_length": 100,
+    "vocab_size": 1000
+  },
+  "model": {
+    "hidden_dim": 256,
+    "num_properties": 3,
+    "property_names": ["melting_point", "boiling_point", "flash_point"],
+    "dropout_rate": 0.3,
+    "attention_heads": 4
+  },
+  "training": {
+    "learning_rate": 0.001,
+    "weight_decay": 1e-5,
+    "batch_size": 32,
+    "num_epochs": 100,
+    "patience": 20,
+    "train_ratio": 0.7,
+    "val_ratio": 0.15,
+    "test_ratio": 0.15
+  },
+  "prediction": {
+    "confidence_threshold": 0.6,
+    "property_ranges": {
+      "melting_point": [50, 2000],
+      "boiling_point": [100, 3000],
+      "flash_point": [0, 500]
+    },
+    "units": {
+      "melting_point": "K",
+      "boiling_point": "K",
+      "flash_point": "K"
+    }
+  },
+  "visualization": {
+    "figure_size": [15, 12],
+    "dpi": 300,
+    "style": "default",
+    "color_palette": ["#FF6B6B", "#4ECDC4", "#45B7D1", "#96CEB4", "#FFEAA7"]
+  },
+  "output": {
+    "save_plots": true,
+    "save_data": true,
+    "export_formats": ["json", "csv"],
+    "log_level": "INFO"
+  }
+}
