@@ -18,6 +18,7 @@ warnings.filterwarnings('ignore')
 from data_acquisition import KPIDataAcquisition
 from data_preprocessing import DataPreprocessor, MolecularDescriptorCalculator
 from molecular_embedding import MolecularEmbedder, KnowledgeVectorizer, EmbeddingVisualizer
+from interpretability_analysis import InterpretabilityAnalyzer
 from deep_learning_model import (
     MolecularPropertyPredictor, ModelTrainer, ModelEvaluator, 
     MolecularDataset
@@ -54,6 +55,7 @@ class KPIFramework:
         self.vectorizer = None
         self.model = None
         self.trainer = None
+        self.interpretability_analyzer = None
         self.evaluator = None
         self.predictor = None
         
@@ -65,6 +67,14 @@ class KPIFramework:
         self.training_data = None
         
         logger.info("KPI框架初始化完成")
+    
+    def setup_interpretability_analysis(self):
+        """
+        设置可解释性分析模块
+        """
+        logger.info("设置可解释性分析模块...")
+        self.interpretability_analyzer = InterpretabilityAnalyzer()
+        logger.info("可解释性分析模块设置完成")
     
     def setup_data_acquisition(self, 
                               materials_project_api_key: str = None,
@@ -421,7 +431,10 @@ class KPIFramework:
             # 5. 模型训练
             training_history = self.run_training()
             
-            # 6. 示例预测
+            # 6. 可解释性分析
+            interpretability_results = self.run_interpretability_analysis()
+            
+            # 7. 示例预测
             if len(molecular_embeddings) > 0:
                 sample_prediction = self.run_prediction(
                     molecular_embeddings[0], 
@@ -437,11 +450,65 @@ class KPIFramework:
                 'molecular_embeddings': molecular_embeddings,
                 'knowledge_vectors': knowledge_vectors,
                 'training_history': training_history,
+                'interpretability_results': interpretability_results,
                 'sample_prediction': sample_prediction
             }
             
-            logger.info("KPI框架完整流程运行完成")
-            return results
+                    logger.info("KPI框架完整流程运行完成")
+        return results
+    
+    def run_interpretability_analysis(self, 
+                                    target_columns: List[str] = ['MP', 'BP', 'FP'],
+                                    save_plots: bool = True) -> Dict:
+        """
+        运行可解释性分析
+        
+        Args:
+            target_columns (List[str]): 目标性质列名
+            save_plots (bool): 是否保存图表
+            
+        Returns:
+            Dict: 分析结果
+        """
+        if self.interpretability_analyzer is None:
+            logger.warning("可解释性分析模块未设置，正在设置...")
+            self.setup_interpretability_analysis()
+        
+        if self.organised_data is None or self.organised_data.empty:
+            logger.error("没有组织化数据，无法进行可解释性分析")
+            return {}
+        
+        logger.info("开始可解释性分析...")
+        
+        # 执行可解释性分析
+        analysis_results = self.interpretability_analyzer.analyze_molecular_features(
+            self.organised_data, target_columns
+        )
+        
+        # 生成可视化
+        if save_plots:
+            self.interpretability_analyzer.visualize_feature_importance(
+                analysis_results, 
+                save_path='kpi_feature_importance_analysis.png'
+            )
+            
+            self.interpretability_analyzer.visualize_shap_summary(
+                analysis_results,
+                save_path='kpi_shap_summary_analysis.png'
+            )
+        
+        # 生成分析报告
+        report = self.interpretability_analyzer.generate_interpretability_report(analysis_results)
+        
+        # 保存报告
+        with open('kpi_interpretability_report.txt', 'w', encoding='utf-8') as f:
+            f.write(report)
+        
+        logger.info("可解释性分析完成")
+        return {
+            'analysis_results': analysis_results,
+            'report': report
+        }
             
         except Exception as e:
             logger.error(f"运行完整流程时发生错误: {e}")
