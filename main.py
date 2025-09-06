@@ -15,7 +15,7 @@ import warnings
 warnings.filterwarnings('ignore')
 
 # 导入各个模块
-from data_acquisition import MaterialsProjectDataAcquisition
+from data_acquisition import KPIDataAcquisition
 from data_preprocessing import DataPreprocessor, MolecularDescriptorCalculator
 from molecular_embedding import MolecularEmbedder, KnowledgeVectorizer, EmbeddingVisualizer
 from deep_learning_model import (
@@ -66,16 +66,25 @@ class KPIFramework:
         
         logger.info("KPI框架初始化完成")
     
-    def setup_data_acquisition(self, api_key: str):
+    def setup_data_acquisition(self, 
+                              materials_project_api_key: str = None,
+                              pubchem_api_key: str = None,
+                              crossref_api_key: str = None):
         """
         设置数据获取模块
         
         Args:
-            api_key (str): Materials Project API密钥
+            materials_project_api_key (str, optional): Materials Project API密钥
+            pubchem_api_key (str, optional): PubChem API密钥
+            crossref_api_key (str, optional): CrossRef API密钥
         """
-        logger.info("设置数据获取模块...")
-        self.data_acquirer = MaterialsProjectDataAcquisition(api_key)
-        logger.info("数据获取模块设置完成")
+        logger.info("设置KPI数据获取模块...")
+        self.data_acquirer = KPIDataAcquisition(
+            materials_project_api_key=materials_project_api_key,
+            pubchem_api_key=pubchem_api_key,
+            crossref_api_key=crossref_api_key
+        )
+        logger.info("KPI数据获取模块设置完成")
     
     def setup_preprocessing(self):
         """设置数据预处理模块"""
@@ -123,44 +132,48 @@ class KPIFramework:
         logger.info("深度学习模型设置完成")
     
     def run_data_acquisition(self, 
+                           search_terms: Optional[List[str]] = None,
                            elements: Optional[List[str]] = None,
-                           formula: Optional[str] = None,
-                           num_materials: int = 100) -> pd.DataFrame:
+                           max_materials_per_source: int = 200) -> pd.DataFrame:
         """
-        运行数据获取
+        运行KPI数据获取
         
         Args:
+            search_terms (List[str], optional): 搜索词列表
             elements (List[str], optional): 元素列表
-            formula (str, optional): 化学式
-            num_materials (int): 材料数量
+            max_materials_per_source (int): 每个数据源的最大材料数量
             
         Returns:
             pd.DataFrame: 获取的数据
         """
-        logger.info("开始数据获取...")
+        logger.info("开始KPI数据获取...")
         
         if self.data_acquirer is None:
             raise ValueError("数据获取模块未设置，请先调用setup_data_acquisition")
         
-        # 搜索材料
-        materials_df = self.data_acquirer.search_materials(
+        # 设置默认搜索词
+        if search_terms is None:
+            search_terms = ["electrolyte", "ionic liquid", "solvent", "electrolyte solution"]
+        
+        # 设置默认元素（符合KPI要求）
+        if elements is None:
+            elements = ["C", "H", "O", "N", "F", "P", "Cl", "Br", "I"]
+        
+        # 从所有数据源收集数据
+        all_data = self.data_acquirer.collect_all_data(
+            search_terms=search_terms,
             elements=elements,
-            formula=formula,
-            num_chunks=num_materials // 100 + 1
+            max_materials_per_source=max_materials_per_source
         )
         
-        if materials_df.empty:
-            logger.warning("未找到符合条件的材料，使用示例数据")
+        if all_data.empty:
+            logger.warning("未找到符合KPI要求的材料，使用示例数据")
             return self._create_sample_data()
         
-        # 获取详细属性
-        material_ids = materials_df["material_id"].tolist()[:num_materials]
-        detailed_df = self.data_acquirer.get_material_details(material_ids)
-        
         # 创建原始数据表
-        self.origin_data = self.data_acquirer.create_origin_sheet(detailed_df)
+        self.origin_data = self.data_acquirer.create_origin_sheet(all_data)
         
-        logger.info(f"数据获取完成，获得 {len(self.origin_data)} 个材料")
+        logger.info(f"KPI数据获取完成，获得 {len(self.origin_data)} 个符合要求的材料")
         return self.origin_data
     
     def run_preprocessing(self) -> pd.DataFrame:
@@ -347,18 +360,22 @@ class KPIFramework:
         return predictions
     
     def run_full_pipeline(self, 
-                         api_key: str,
+                         materials_project_api_key: str = None,
+                         pubchem_api_key: str = None,
+                         crossref_api_key: str = None,
+                         search_terms: Optional[List[str]] = None,
                          elements: Optional[List[str]] = None,
-                         formula: Optional[str] = None,
-                         num_materials: int = 100) -> Dict:
+                         max_materials_per_source: int = 200) -> Dict:
         """
-        运行完整流程
+        运行完整KPI框架流程
         
         Args:
-            api_key (str): Materials Project API密钥
+            materials_project_api_key (str, optional): Materials Project API密钥
+            pubchem_api_key (str, optional): PubChem API密钥
+            crossref_api_key (str, optional): CrossRef API密钥
+            search_terms (List[str], optional): 搜索词列表
             elements (List[str], optional): 元素列表
-            formula (str, optional): 化学式
-            num_materials (int): 材料数量
+            max_materials_per_source (int): 每个数据源的最大材料数量
             
         Returns:
             Dict: 完整流程结果
@@ -367,13 +384,21 @@ class KPIFramework:
         
         try:
             # 1. 设置所有模块
-            self.setup_data_acquisition(api_key)
+            self.setup_data_acquisition(
+                materials_project_api_key=materials_project_api_key,
+                pubchem_api_key=pubchem_api_key,
+                crossref_api_key=crossref_api_key
+            )
             self.setup_preprocessing()
             self.setup_embedding()
             self.setup_model()
             
             # 2. 数据获取
-            origin_data = self.run_data_acquisition(elements, formula, num_materials)
+            origin_data = self.run_data_acquisition(
+                search_terms=search_terms,
+                elements=elements,
+                max_materials_per_source=max_materials_per_source
+            )
             
             # 3. 数据预处理
             organised_data = self.run_preprocessing()
@@ -410,20 +435,20 @@ class KPIFramework:
             raise
     
     def _create_sample_data(self) -> pd.DataFrame:
-        """创建示例数据"""
-        logger.info("创建示例数据...")
+        """创建符合KPI框架要求的示例数据"""
+        logger.info("创建符合KPI框架要求的示例数据...")
         
         sample_data = {
             'SMILES': ['CCO', 'CC(=O)O', 'c1ccccc1', 'CCN', 'CCOO', 'CC(C)O', 'CCCC', 'c1ccc(cc1)O'],
-            'Material_ID': [f'mp-{i}' for i in range(8)],
+            'Material_ID': [f'kpi-{i}' for i in range(8)],
             'Formula': ['C2H6O', 'C2H4O2', 'C6H6', 'C2H7N', 'C2H6O2', 'C3H8O', 'C4H10', 'C6H6O'],
-            'Density': [0.789, 1.049, 0.876, 0.682, 1.11, 0.785, 0.626, 0.949],
-            'Volume': [58.0, 57.0, 78.0, 45.0, 62.0, 60.0, 74.0, 94.0],
-            'NSites': [9, 8, 12, 8, 10, 10, 14, 13],
+            'Molwt': [46.07, 60.05, 78.11, 45.08, 62.07, 60.10, 58.12, 94.11],
+            '#Heavy': [3, 4, 6, 3, 4, 4, 4, 7],
             'Elements': ['C,H,O', 'C,H,O', 'C,H', 'C,H,N', 'C,H,O', 'C,H,O', 'C,H', 'C,H,O'],
-            'Formation_Energy': [-0.5, -0.3, -0.8, -0.4, -0.6, -0.7, -1.0, -0.9],
-            'Band_Gap': [2.5, 3.2, 1.8, 2.8, 3.0, 2.6, 1.5, 2.9],
-            'Is_Stable': [True, True, True, True, True, True, True, True]
+            'MP': [159.0, 289.0, 278.0, 194.0, 200.0, 185.0, 134.0, 314.0],
+            'BP': [351.0, 391.0, 353.0, 239.0, 373.0, 338.0, 272.0, 455.0],
+            'FP': [286.0, 327.0, 262.0, 200.0, 300.0, 285.0, 213.0, 350.0],
+            'Source': ['sample'] * 8
         }
         
         return pd.DataFrame(sample_data)
@@ -438,10 +463,12 @@ class KPIFramework:
 def main():
     """主函数"""
     parser = argparse.ArgumentParser(description='KPI框架 - 基于知识的电解质属性预测集成框架')
-    parser.add_argument('--api_key', type=str, help='Materials Project API密钥')
+    parser.add_argument('--materials_project_api_key', type=str, help='Materials Project API密钥')
+    parser.add_argument('--pubchem_api_key', type=str, help='PubChem API密钥')
+    parser.add_argument('--crossref_api_key', type=str, help='CrossRef API密钥')
+    parser.add_argument('--search_terms', nargs='+', help='搜索词列表')
     parser.add_argument('--elements', nargs='+', help='要搜索的元素列表')
-    parser.add_argument('--formula', type=str, help='化学式过滤')
-    parser.add_argument('--num_materials', type=int, default=100, help='材料数量')
+    parser.add_argument('--max_materials_per_source', type=int, default=200, help='每个数据源的最大材料数量')
     parser.add_argument('--config', type=str, default='config.json', help='配置文件路径')
     
     args = parser.parse_args()
@@ -460,18 +487,22 @@ def main():
     kpi_framework = KPIFramework(config)
     
     # 设置API密钥
-    api_key = args.api_key or "your_materials_project_api_key_here"
+    materials_project_api_key = args.materials_project_api_key or "your_materials_project_api_key_here"
+    pubchem_api_key = args.pubchem_api_key or "your_pubchem_api_key_here"
+    crossref_api_key = args.crossref_api_key or "your_crossref_api_key_here"
     
-    if api_key == "your_materials_project_api_key_here":
-        logger.warning("使用默认API密钥，请设置有效的Materials Project API密钥")
+    if materials_project_api_key == "your_materials_project_api_key_here":
+        logger.warning("使用默认API密钥，请设置有效的API密钥")
     
     try:
         # 运行完整流程
         results = kpi_framework.run_full_pipeline(
-            api_key=api_key,
+            materials_project_api_key=materials_project_api_key,
+            pubchem_api_key=pubchem_api_key,
+            crossref_api_key=crossref_api_key,
+            search_terms=args.search_terms,
             elements=args.elements,
-            formula=args.formula,
-            num_materials=args.num_materials
+            max_materials_per_source=args.max_materials_per_source
         )
         
         logger.info("KPI框架运行成功！")
