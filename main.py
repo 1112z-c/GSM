@@ -403,6 +403,18 @@ class KPIFramework:
             # 3. 数据预处理
             organised_data = self.run_preprocessing()
             
+            # 3.5. MACCS和t-SNE分析
+            if not organised_data.empty:
+                logger.info("执行MACCS和t-SNE分析...")
+                maccs_tsne_results = self.preprocessor.perform_maccs_tsne_analysis(
+                    organised_data, 
+                    property_column='MP',
+                    save_path='kpi_molecular_distribution_analysis.png'
+                )
+                logger.info("MACCS和t-SNE分析完成")
+            else:
+                maccs_tsne_results = None
+            
             # 4. 分子嵌入和知识向量化
             molecular_embeddings, knowledge_vectors = self.run_embedding()
             
@@ -421,6 +433,7 @@ class KPIFramework:
             results = {
                 'origin_data': origin_data,
                 'organised_data': organised_data,
+                'maccs_tsne_results': maccs_tsne_results,
                 'molecular_embeddings': molecular_embeddings,
                 'knowledge_vectors': knowledge_vectors,
                 'training_history': training_history,

@@ -7,16 +7,144 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-from typing import List, Dict, Tuple, Optional
+from typing import List, Dict, Tuple, Optional, Union
 import logging
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from sklearn.impute import SimpleImputer
+from sklearn.manifold import TSNE
+from sklearn.cluster import KMeans
+from sklearn.decomposition import PCA
+from collections import Counter
 import warnings
 warnings.filterwarnings('ignore')
 
 # 设置日志
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+class MACCSEncoder:
+    """MACCS分子访问系统编码器"""
+    
+    def __init__(self):
+        """初始化MACCS编码器"""
+        # MACCS键定义（简化版本，实际应用中应使用RDKit的MACCS）
+        self.maccs_keys = self._define_maccs_keys()
+        self.num_keys = len(self.maccs_keys)
+        
+    def _define_maccs_keys(self) -> List[str]:
+        """定义MACCS键（简化版本）"""
+        # 这里是一个简化的MACCS键定义
+        # 实际应用中应该使用RDKit的MACCS实现
+        maccs_keys = []
+        
+        # 基本原子计数
+        for atom in ['C', 'N', 'O', 'S', 'P', 'F', 'Cl', 'Br', 'I']:
+            maccs_keys.append(f'atom_{atom}')
+        
+        # 环系统
+        for ring_size in range(3, 9):
+            maccs_keys.append(f'ring_{ring_size}')
+        
+        # 官能团
+        functional_groups = [
+            'alcohol', 'ether', 'carbonyl', 'carboxyl', 'amine', 'amide',
+            'ester', 'nitrile', 'nitro', 'halide', 'sulfoxide', 'sulfone'
+        ]
+        for fg in functional_groups:
+            maccs_keys.append(f'fg_{fg}')
+        
+        # 键类型
+        bond_types = ['single', 'double', 'triple', 'aromatic']
+        for bt in bond_types:
+            maccs_keys.append(f'bond_{bt}')
+        
+        # 分子大小
+        size_ranges = ['small', 'medium', 'large']
+        for sr in size_ranges:
+            maccs_keys.append(f'size_{sr}')
+        
+        return maccs_keys
+    
+    def encode_smiles(self, smiles: str) -> np.ndarray:
+        """
+        将SMILES编码为MACCS指纹
+        
+        Args:
+            smiles (str): SMILES字符串
+            
+        Returns:
+            np.ndarray: MACCS指纹向量
+        """
+        try:
+            # 简化的MACCS编码实现
+            # 实际应用中应该使用RDKit的MACCS
+            fingerprint = np.zeros(self.num_keys, dtype=int)
+            
+            # 基本原子计数
+            for i, atom in enumerate(['C', 'N', 'O', 'S', 'P', 'F', 'Cl', 'Br', 'I']):
+                if atom in smiles:
+                    fingerprint[i] = 1
+            
+            # 环系统检测（简化）
+            if 'c' in smiles:  # 芳香环
+                fingerprint[9] = 1  # ring_6
+            if '(' in smiles and ')' in smiles:  # 可能有环
+                fingerprint[10] = 1  # ring_5
+            
+            # 官能团检测（简化）
+            if 'O' in smiles:
+                if 'C-O' in smiles or 'CO' in smiles:
+                    fingerprint[11] = 1  # alcohol
+                if 'C=O' in smiles:
+                    fingerprint[13] = 1  # carbonyl
+            
+            if 'N' in smiles:
+                fingerprint[15] = 1  # amine
+            
+            # 键类型检测
+            if '=' in smiles:
+                fingerprint[19] = 1  # double
+            if '#' in smiles:
+                fingerprint[20] = 1  # triple
+            if 'c' in smiles:
+                fingerprint[21] = 1  # aromatic
+            
+            # 分子大小
+            mol_length = len(smiles)
+            if mol_length < 20:
+                fingerprint[22] = 1  # small
+            elif mol_length < 50:
+                fingerprint[23] = 1  # medium
+            else:
+                fingerprint[24] = 1  # large
+            
+            return fingerprint
+            
+        except Exception as e:
+            logger.warning(f"MACCS编码SMILES {smiles} 时发生错误: {e}")
+            return np.zeros(self.num_keys, dtype=int)
+    
+    def encode_molecules(self, smiles_list: List[str]) -> np.ndarray:
+        """
+        批量编码分子
+        
+        Args:
+            smiles_list (List[str]): SMILES字符串列表
+            
+        Returns:
+            np.ndarray: MACCS指纹矩阵
+        """
+        logger.info(f"开始MACCS编码 {len(smiles_list)} 个分子...")
+        
+        fingerprints = []
+        for smiles in smiles_list:
+            fingerprint = self.encode_smiles(smiles)
+            fingerprints.append(fingerprint)
+        
+        fingerprints_array = np.array(fingerprints)
+        logger.info(f"MACCS编码完成，形状: {fingerprints_array.shape}")
+        
+        return fingerprints_array
 
 class MolecularDescriptorCalculator:
     """分子描述符计算器"""
@@ -176,6 +304,7 @@ class DataPreprocessor:
         self.scaler = StandardScaler()
         self.imputer = SimpleImputer(strategy='median')
         self.descriptor_calculator = MolecularDescriptorCalculator()
+        self.maccs_encoder = MACCSEncoder()
         self.is_fitted = False
         
         # KPI框架数据限制
@@ -187,6 +316,14 @@ class DataPreprocessor:
         
         # 目标属性
         self.target_properties = ['melting_point', 'boiling_point', 'flash_point']
+        
+        # t-SNE参数
+        self.tsne_params = {
+            'n_components': 2,
+            'perplexity': 30,
+            'n_iter': 1000,
+            'random_state': 42
+        }
     
     def clean_data(self, df: pd.DataFrame) -> pd.DataFrame:
         """
@@ -389,6 +526,301 @@ class DataPreprocessor:
             i += 1
         
         return count
+    
+    def perform_maccs_tsne_analysis(self, df: pd.DataFrame, 
+                                   property_column: str = 'MP',
+                                   save_path: Optional[str] = None) -> Dict:
+        """
+        执行完整的MACCS和t-SNE分析
+        
+        Args:
+            df (pd.DataFrame): 数据表
+            property_column (str): 用于颜色标注的性质列名
+            save_path (str, optional): 保存路径
+            
+        Returns:
+            Dict: 分析结果
+        """
+        logger.info(f"开始MACCS和t-SNE分析，性质列: {property_column}")
+        
+        # 检查性质列是否存在
+        if property_column not in df.columns:
+            logger.warning(f"性质列 {property_column} 不存在，使用聚类标签进行颜色标注")
+            property_values = None
+            property_name = "聚类"
+        else:
+            property_data = df[property_column].dropna()
+            if len(property_data) == 0:
+                logger.warning(f"性质列 {property_column} 无有效数据，使用聚类标签进行颜色标注")
+                property_values = None
+                property_name = "聚类"
+            else:
+                property_values = property_data.values
+                property_name = property_column
+        
+        # 计算MACCS指纹
+        maccs_fingerprints = self.calculate_maccs_fingerprints(df)
+        
+        # 执行t-SNE聚类
+        tsne_results = self.perform_tsne_clustering(
+            maccs_fingerprints, 
+            property_values, 
+            property_name
+        )
+        
+        # 可视化分子分布
+        self.visualize_molecular_distribution(
+            tsne_results, 
+            save_path=save_path
+        )
+        
+        # 分析聚类结果
+        cluster_analysis = self.analyze_molecular_clusters(tsne_results, df)
+        
+        # 组合结果
+        analysis_results = {
+            'maccs_fingerprints': maccs_fingerprints,
+            'tsne_results': tsne_results,
+            'cluster_analysis': cluster_analysis,
+            'property_column': property_column,
+            'property_name': property_name
+        }
+        
+        logger.info("MACCS和t-SNE分析完成")
+        return analysis_results
+    
+    def calculate_maccs_fingerprints(self, df: pd.DataFrame) -> np.ndarray:
+        """
+        计算MACCS分子指纹
+        
+        Args:
+            df (pd.DataFrame): 包含SMILES的数据
+            
+        Returns:
+            np.ndarray: MACCS指纹矩阵
+        """
+        logger.info("开始计算MACCS分子指纹...")
+        
+        smiles_list = df['SMILES'].tolist()
+        maccs_fingerprints = self.maccs_encoder.encode_molecules(smiles_list)
+        
+        logger.info(f"MACCS指纹计算完成，形状: {maccs_fingerprints.shape}")
+        return maccs_fingerprints
+    
+    def perform_tsne_clustering(self, maccs_fingerprints: np.ndarray, 
+                               property_values: Optional[np.ndarray] = None,
+                               property_name: str = "Property") -> Dict[str, np.ndarray]:
+        """
+        执行t-SNE聚类分析
+        
+        Args:
+            maccs_fingerprints (np.ndarray): MACCS指纹矩阵
+            property_values (np.ndarray, optional): 性质值用于颜色标注
+            property_name (str): 性质名称
+            
+        Returns:
+            Dict[str, np.ndarray]: 包含t-SNE坐标和聚类结果
+        """
+        logger.info("开始t-SNE聚类分析...")
+        
+        # 执行t-SNE降维
+        tsne = TSNE(**self.tsne_params)
+        tsne_coords = tsne.fit_transform(maccs_fingerprints)
+        
+        # K-means聚类
+        n_clusters = min(8, len(maccs_fingerprints) // 5)  # 动态确定聚类数
+        if n_clusters < 2:
+            n_clusters = 2
+        
+        kmeans = KMeans(n_clusters=n_clusters, random_state=42)
+        cluster_labels = kmeans.fit_predict(maccs_fingerprints)
+        
+        results = {
+            'tsne_coords': tsne_coords,
+            'cluster_labels': cluster_labels,
+            'property_values': property_values,
+            'property_name': property_name
+        }
+        
+        logger.info(f"t-SNE聚类完成，聚类数: {n_clusters}")
+        return results
+    
+    def visualize_molecular_distribution(self, 
+                                       tsne_results: Dict[str, np.ndarray],
+                                       save_path: Optional[str] = None) -> None:
+        """
+        可视化分子分布（根据性质进行颜色标注）
+        
+        Args:
+            tsne_results (Dict): t-SNE聚类结果
+            save_path (str, optional): 保存路径
+        """
+        logger.info("生成分子分布可视化...")
+        
+        tsne_coords = tsne_results['tsne_coords']
+        cluster_labels = tsne_results['cluster_labels']
+        property_values = tsne_results.get('property_values')
+        property_name = tsne_results.get('property_name', 'Property')
+        
+        # 创建图形
+        fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+        fig.suptitle('KPI框架分子分布可视化分析', fontsize=16, fontweight='bold')
+        
+        # 1. 根据性质值进行颜色标注的散点图
+        ax1 = axes[0, 0]
+        if property_values is not None:
+            scatter = ax1.scatter(tsne_coords[:, 0], tsne_coords[:, 1], 
+                                c=property_values, cmap='viridis', 
+                                alpha=0.7, s=50, edgecolors='black', linewidth=0.5)
+            ax1.set_title(f'分子分布 - 根据{property_name}颜色标注')
+            plt.colorbar(scatter, ax=ax1, label=property_name)
+        else:
+            scatter = ax1.scatter(tsne_coords[:, 0], tsne_coords[:, 1], 
+                                c=cluster_labels, cmap='tab10', 
+                                alpha=0.7, s=50, edgecolors='black', linewidth=0.5)
+            ax1.set_title('分子分布 - 根据聚类颜色标注')
+            plt.colorbar(scatter, ax=ax1, label='Cluster')
+        
+        ax1.set_xlabel('t-SNE 1')
+        ax1.set_ylabel('t-SNE 2')
+        ax1.grid(True, alpha=0.3)
+        
+        # 2. 聚类分布
+        ax2 = axes[0, 1]
+        unique_clusters, cluster_counts = np.unique(cluster_labels, return_counts=True)
+        bars = ax2.bar(unique_clusters, cluster_counts, alpha=0.7, 
+                      color=plt.cm.tab10(np.linspace(0, 1, len(unique_clusters))))
+        ax2.set_title('聚类分布')
+        ax2.set_xlabel('聚类标签')
+        ax2.set_ylabel('分子数量')
+        ax2.grid(True, alpha=0.3)
+        
+        # 添加数值标签
+        for bar, count in zip(bars, cluster_counts):
+            ax2.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.1,
+                    str(count), ha='center', va='bottom')
+        
+        # 3. 性质值分布（如果有性质值）
+        if property_values is not None:
+            ax3 = axes[1, 0]
+            ax3.hist(property_values, bins=20, alpha=0.7, color='skyblue', edgecolor='black')
+            ax3.set_title(f'{property_name}分布')
+            ax3.set_xlabel(property_name)
+            ax3.set_ylabel('频次')
+            ax3.grid(True, alpha=0.3)
+            
+            # 添加统计信息
+            mean_val = np.mean(property_values)
+            std_val = np.std(property_values)
+            ax3.axvline(mean_val, color='red', linestyle='--', 
+                       label=f'均值: {mean_val:.2f}')
+            ax3.axvline(mean_val + std_val, color='orange', linestyle='--', 
+                       label=f'均值+标准差: {mean_val + std_val:.2f}')
+            ax3.axvline(mean_val - std_val, color='orange', linestyle='--', 
+                       label=f'均值-标准差: {mean_val - std_val:.2f}')
+            ax3.legend()
+        else:
+            ax3 = axes[1, 0]
+            ax3.text(0.5, 0.5, '无性质数据', ha='center', va='center', 
+                    transform=ax3.transAxes, fontsize=14)
+            ax3.set_title('性质分布 - 无数据')
+        
+        # 4. 聚类中心分析
+        ax4 = axes[1, 1]
+        if property_values is not None:
+            # 计算每个聚类的平均性质值
+            cluster_property_means = []
+            for cluster_id in unique_clusters:
+                cluster_mask = cluster_labels == cluster_id
+                cluster_property_mean = np.mean(property_values[cluster_mask])
+                cluster_property_means.append(cluster_property_mean)
+            
+            bars = ax4.bar(unique_clusters, cluster_property_means, alpha=0.7, 
+                          color=plt.cm.viridis(np.linspace(0, 1, len(unique_clusters))))
+            ax4.set_title(f'各聚类平均{property_name}')
+            ax4.set_xlabel('聚类标签')
+            ax4.set_ylabel(f'平均{property_name}')
+            ax4.grid(True, alpha=0.3)
+            
+            # 添加数值标签
+            for bar, mean_val in zip(bars, cluster_property_means):
+                ax4.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.01,
+                        f'{mean_val:.2f}', ha='center', va='bottom')
+        else:
+            ax4.text(0.5, 0.5, '无性质数据', ha='center', va='center', 
+                    transform=ax4.transAxes, fontsize=14)
+            ax4.set_title('聚类性质分析 - 无数据')
+        
+        plt.tight_layout()
+        
+        if save_path:
+            plt.savefig(save_path, dpi=300, bbox_inches='tight')
+            logger.info(f"分子分布可视化图表已保存到 {save_path}")
+        
+        plt.show()
+    
+    def analyze_molecular_clusters(self, 
+                                 tsne_results: Dict[str, np.ndarray],
+                                 df: pd.DataFrame) -> Dict:
+        """
+        分析分子聚类结果
+        
+        Args:
+            tsne_results (Dict): t-SNE聚类结果
+            df (pd.DataFrame): 原始数据
+            
+        Returns:
+            Dict: 聚类分析结果
+        """
+        logger.info("分析分子聚类结果...")
+        
+        cluster_labels = tsne_results['cluster_labels']
+        property_values = tsne_results.get('property_values')
+        property_name = tsne_results.get('property_name', 'Property')
+        
+        analysis_results = {}
+        
+        # 基本聚类统计
+        unique_clusters, cluster_counts = np.unique(cluster_labels, return_counts=True)
+        analysis_results['cluster_statistics'] = {
+            'num_clusters': len(unique_clusters),
+            'cluster_sizes': dict(zip(unique_clusters, cluster_counts)),
+            'largest_cluster': unique_clusters[np.argmax(cluster_counts)],
+            'smallest_cluster': unique_clusters[np.argmin(cluster_counts)]
+        }
+        
+        # 每个聚类的分子信息
+        cluster_molecules = {}
+        for cluster_id in unique_clusters:
+            cluster_mask = cluster_labels == cluster_id
+            cluster_smiles = df[cluster_mask]['SMILES'].tolist()
+            cluster_molecules[cluster_id] = {
+                'smiles': cluster_smiles,
+                'count': len(cluster_smiles),
+                'representative_smiles': cluster_smiles[0] if cluster_smiles else None
+            }
+        
+        analysis_results['cluster_molecules'] = cluster_molecules
+        
+        # 性质分析（如果有性质值）
+        if property_values is not None:
+            cluster_property_analysis = {}
+            for cluster_id in unique_clusters:
+                cluster_mask = cluster_labels == cluster_id
+                cluster_props = property_values[cluster_mask]
+                
+                cluster_property_analysis[cluster_id] = {
+                    'mean': np.mean(cluster_props),
+                    'std': np.std(cluster_props),
+                    'min': np.min(cluster_props),
+                    'max': np.max(cluster_props),
+                    'count': len(cluster_props)
+                }
+            
+            analysis_results['cluster_property_analysis'] = cluster_property_analysis
+        
+        logger.info(f"聚类分析完成，发现 {len(unique_clusters)} 个聚类")
+        return analysis_results
     
     def calculate_molecular_descriptors(self, df: pd.DataFrame) -> pd.DataFrame:
         """
@@ -759,18 +1191,18 @@ class DataPreprocessor:
     
     def visualize_data(self, df: pd.DataFrame, save_path: str = None):
         """
-        KPI框架数据可视化
+        KPI框架数据可视化（包含MACCS和t-SNE分析）
         
         Args:
             df (pd.DataFrame): 数据表
             save_path (str, optional): 保存路径
         """
-        logger.info("生成KPI框架数据可视化...")
+        logger.info("生成KPI框架数据可视化（包含MACCS和t-SNE分析）...")
         
         # 设置图形样式
         plt.style.use('default')
-        fig, axes = plt.subplots(3, 3, figsize=(18, 15))
-        fig.suptitle('KPI框架数据可视化分析', fontsize=16, fontweight='bold')
+        fig, axes = plt.subplots(4, 3, figsize=(20, 20))
+        fig.suptitle('KPI框架数据可视化分析（含MACCS和t-SNE）', fontsize=16, fontweight='bold')
         
         # 1. 分子量分布
         if 'Molwt' in df.columns:
@@ -971,11 +1403,120 @@ class DataPreprocessor:
                 ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.01,
                        f'{value:.2f}', ha='center', va='bottom')
         
+        # 10. MACCS指纹分析
+        ax = axes[3, 0]
+        try:
+            # 计算MACCS指纹
+            maccs_fingerprints = self.calculate_maccs_fingerprints(df)
+            
+            # 计算MACCS键的活跃度
+            key_activity = np.sum(maccs_fingerprints, axis=0)
+            top_keys = np.argsort(key_activity)[-10:]  # 前10个最活跃的键
+            
+            bars = ax.bar(range(len(top_keys)), key_activity[top_keys], alpha=0.7, color='purple', edgecolor='black')
+            ax.set_title('MACCS键活跃度（前10）')
+            ax.set_xlabel('MACCS键索引')
+            ax.set_ylabel('活跃度')
+            ax.grid(True, alpha=0.3)
+            
+            # 添加数值标签
+            for bar, activity in zip(bars, key_activity[top_keys]):
+                ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.1,
+                       str(int(activity)), ha='center', va='bottom')
+        except Exception as e:
+            ax.text(0.5, 0.5, f'MACCS分析错误:\n{str(e)}', ha='center', va='center', 
+                   transform=ax.transAxes, fontsize=10)
+            ax.set_title('MACCS指纹分析 - 错误')
+        
+        # 11. t-SNE聚类分析（根据熔点颜色标注）
+        ax = axes[3, 1]
+        try:
+            if 'MP' in df.columns and not df['MP'].isna().all():
+                # 使用熔点进行颜色标注
+                mp_data = df['MP'].dropna()
+                valid_indices = df['MP'].notna()
+                valid_smiles = df[valid_indices]['SMILES'].tolist()
+                
+                if len(valid_smiles) > 1:
+                    # 计算MACCS指纹
+                    maccs_fingerprints = self.maccs_encoder.encode_molecules(valid_smiles)
+                    
+                    # 执行t-SNE
+                    tsne_results = self.perform_tsne_clustering(
+                        maccs_fingerprints, 
+                        mp_data.values, 
+                        "熔点(MP)"
+                    )
+                    
+                    # 绘制t-SNE结果
+                    scatter = ax.scatter(tsne_results['tsne_coords'][:, 0], 
+                                       tsne_results['tsne_coords'][:, 1], 
+                                       c=mp_data.values, cmap='viridis', 
+                                       alpha=0.7, s=30, edgecolors='black', linewidth=0.3)
+                    ax.set_title('t-SNE聚类 - 根据熔点颜色标注')
+                    ax.set_xlabel('t-SNE 1')
+                    ax.set_ylabel('t-SNE 2')
+                    ax.grid(True, alpha=0.3)
+                    plt.colorbar(scatter, ax=ax, label='熔点(K)')
+                else:
+                    ax.text(0.5, 0.5, '熔点数据不足', ha='center', va='center', 
+                           transform=ax.transAxes, fontsize=12)
+                    ax.set_title('t-SNE聚类 - 数据不足')
+            else:
+                ax.text(0.5, 0.5, '无熔点数据', ha='center', va='center', 
+                       transform=ax.transAxes, fontsize=12)
+                ax.set_title('t-SNE聚类 - 无数据')
+        except Exception as e:
+            ax.text(0.5, 0.5, f't-SNE分析错误:\n{str(e)}', ha='center', va='center', 
+                   transform=ax.transAxes, fontsize=10)
+            ax.set_title('t-SNE聚类分析 - 错误')
+        
+        # 12. 分子聚类统计
+        ax = axes[3, 2]
+        try:
+            if 'MP' in df.columns and not df['MP'].isna().all():
+                mp_data = df['MP'].dropna()
+                valid_indices = df['MP'].notna()
+                valid_smiles = df[valid_indices]['SMILES'].tolist()
+                
+                if len(valid_smiles) > 1:
+                    # 计算MACCS指纹并执行聚类
+                    maccs_fingerprints = self.maccs_encoder.encode_molecules(valid_smiles)
+                    tsne_results = self.perform_tsne_clustering(maccs_fingerprints, mp_data.values, "熔点(MP)")
+                    
+                    # 聚类统计
+                    cluster_labels = tsne_results['cluster_labels']
+                    unique_clusters, cluster_counts = np.unique(cluster_labels, return_counts=True)
+                    
+                    bars = ax.bar(unique_clusters, cluster_counts, alpha=0.7, 
+                                color=plt.cm.tab10(np.linspace(0, 1, len(unique_clusters))))
+                    ax.set_title('分子聚类分布')
+                    ax.set_xlabel('聚类标签')
+                    ax.set_ylabel('分子数量')
+                    ax.grid(True, alpha=0.3)
+                    
+                    # 添加数值标签
+                    for bar, count in zip(bars, cluster_counts):
+                        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.1,
+                               str(count), ha='center', va='bottom')
+                else:
+                    ax.text(0.5, 0.5, '数据不足', ha='center', va='center', 
+                           transform=ax.transAxes, fontsize=12)
+                    ax.set_title('聚类统计 - 数据不足')
+            else:
+                ax.text(0.5, 0.5, '无数据', ha='center', va='center', 
+                       transform=ax.transAxes, fontsize=12)
+                ax.set_title('聚类统计 - 无数据')
+        except Exception as e:
+            ax.text(0.5, 0.5, f'聚类统计错误:\n{str(e)}', ha='center', va='center', 
+                   transform=ax.transAxes, fontsize=10)
+            ax.set_title('聚类统计 - 错误')
+        
         plt.tight_layout()
         
         if save_path:
             plt.savefig(save_path, dpi=300, bbox_inches='tight')
-            logger.info(f"KPI框架可视化图表已保存到 {save_path}")
+            logger.info(f"KPI框架可视化图表（含MACCS和t-SNE）已保存到 {save_path}")
         
         plt.show()
     
